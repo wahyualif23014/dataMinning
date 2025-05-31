@@ -131,9 +131,7 @@ class ImprovedSentimentAnalyzer:
         # Fallback 
         rule_result, rule_confidence = self.rule_based_sentiment(text)
         
-        # If model gave low confidence result, combine with rule-based
         if self.sentiment_pipeline and model_result:
-            # If both methods agree, increase confidence
             if model_result == rule_result:
                 combined_confidence = min(0.95, (model_confidence + rule_confidence) / 2 + 0.1)
                 return model_result, combined_confidence

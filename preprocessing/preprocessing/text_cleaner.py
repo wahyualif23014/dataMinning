@@ -6,7 +6,6 @@ from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 
 nltk.download('stopwords')
 
-# inisialissasi 
 
 factory = StemmerFactory()
 stemmer = factory.create_stemmer()
