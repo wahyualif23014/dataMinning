@@ -7,21 +7,44 @@ from tabulate import tabulate
 import logging
 from tqdm import tqdm
 import warnings
+import re
 
-# Setup logging
+# Setup sek
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Suppress warnings
 warnings.filterwarnings("ignore")
 
-class InstagramSentimentAnalyzer:
+class ImprovedSentimentAnalyzer:
     def __init__(self):
-        """Initialize sentiment analyzer dengan IndoBERT model"""
+        """Initialize sentiment analyzer dengan multiple methods"""
         self.device = 0 if torch.cuda.is_available() else -1
         self.model_name = "indobenchmark/indobert-base-p1"
         self.sentiment_pipeline = None
+        self.positive_words = self._load_positive_words()
+        self.negative_words = self._load_negative_words()
         self._load_model()
+    
+    def _load_positive_words(self):
+        """Load positive words for Indonesian"""
+        return {
+            'bagus', 'baik', 'enak', 'seru', 'mantap', 'keren', 'oke', 'ok', 'top',
+            'hebat', 'luar biasa', 'sempurna', 'indah', 'cantik', 'menarik', 
+            'recommended', 'rekomendasi', 'suka', 'senang', 'puas', 'memuaskan',
+            'worth it', 'worthit', 'amazing', 'awesome', 'good', 'great', 'best',
+            'terbaik', 'favorit', 'love', 'like', 'asik', 'asyik', 'menyenangkan',
+            'berkualitas', 'berkelas', 'juara', 'mantul', 'kece', 'gokil', 'wow'
+        }
+    
+    def _load_negative_words(self):
+        """Load negative words for Indonesian"""
+        return {
+            'jelek', 'buruk', 'tidak enak', 'sepi', 'kotor', 'jorok', 'rusak',
+            'mahal', 'mengecewakan', 'kecewa', 'zonk', 'bosan', 'membosankan',
+            'tidak suka', 'benci', 'hate', 'bad', 'worst', 'terrible', 'awful',
+            'gak bagus', 'ga bagus', 'nggak bagus', 'tidak bagus', 'jeblok',
+            'payah', 'ancur', 'parah', 'amit-amit', 'najis', 'ngeri', 'seram',
+            'tidak worth it', 'rugi', 'sia-sia', 'percuma', 'kacau', 'berantakan'
+        }
     
     def _load_model(self):
         """Load IndoBERT sentiment analysis model"""
@@ -34,42 +57,52 @@ class InstagramSentimentAnalyzer:
                 model=self.model_name,
                 tokenizer=self.model_name,
                 device=self.device,
-                return_all_scores=True 
+                return_all_scores=True
             )
             logger.info("Model berhasil dimuat")
         except Exception as e:
-            logger.error(f"Gagal memuat model: {e}")
-            raise
+            logger.warning(f"Gagal memuat IndoBERT model: {e}")
+            logger.info("Akan menggunakan rule-based sentiment analysis")
+            self.sentiment_pipeline = None
     
-    def detect_sentiment(self, text):
-        """
-        Deteksi sentimen dari teks dengan confidence score
+    def rule_based_sentiment(self, text):
+        """Rule-based sentiment analysis untuk fallback"""
+        if not text or text.strip() == "":
+            return 'netral', 0.5
         
-        Args:
-            text (str): Teks yang akan dianalisis
-            
-        Returns:
-            tuple: (label_sentimen, confidence_score)
-        """
+        text_lower = text.lower()
+        
+        # elek ro apik e
+        positive_count = sum(1 for word in self.positive_words if word in text_lower)
+        negative_count = sum(1 for word in self.negative_words if word in text_lower)
+        
+        # score 
+        if positive_count > negative_count:
+            confidence = min(0.9, 0.6 + (positive_count - negative_count) * 0.1)
+            return 'positif', confidence
+        elif negative_count > positive_count:
+            confidence = min(0.9, 0.6 + (negative_count - positive_count) * 0.1)
+            return 'negatif', confidence
+        else:
+            return 'netral', 0.5
+    
+    def detect_sentiment_model(self, text):
+        """Deteksi sentimen menggunakan IndoBERT model"""
         if not text or text.strip() == "":
             return 'netral', 0.0
         
         try:
-            # Truncate text untuk menghindari error token limit
             text_input = str(text)[:512]
-            
-            # Prediksi sentimen
             results = self.sentiment_pipeline(text_input)[0]
             
-            # Cari label dengan confidence tertinggi
             best_result = max(results, key=lambda x: x['score'])
             label_raw = best_result['label'].lower()
             confidence = best_result['score']
             
-            # Mapping label ke format yang diinginkan
-            if any(keyword in label_raw for keyword in ['positive', 'positif', 'pos']):
+            # label mapping
+            if any(keyword in label_raw for keyword in ['positive', 'positif', 'pos', 'label_1']):
                 sentiment_label = 'positif'
-            elif any(keyword in label_raw for keyword in ['negative', 'negatif', 'neg']):
+            elif any(keyword in label_raw for keyword in ['negative', 'negatif', 'neg', 'label_0']):
                 sentiment_label = 'negatif'
             else:
                 sentiment_label = 'netral'
@@ -77,41 +110,64 @@ class InstagramSentimentAnalyzer:
             return sentiment_label, round(confidence, 4)
             
         except Exception as e:
-            logger.warning(f"Gagal mendeteksi sentimen untuk teks: '{text[:50]}...'. Error: {e}")
+            logger.warning(f"Model prediction failed: {e}")
+            return None, 0.0
+    
+    def detect_sentiment(self, text):
+        """
+        Hybrid sentiment detection: Model + Rule-based
+        """
+        if not text or text.strip() == "":
             return 'netral', 0.0
+        
+        # model 1
+        if self.sentiment_pipeline:
+            model_result, model_confidence = self.detect_sentiment_model(text)
+            
+            # model jika
+            if model_result and model_confidence > 0.7:
+                return model_result, model_confidence
+        
+        # Fallback 
+        rule_result, rule_confidence = self.rule_based_sentiment(text)
+        
+        # If model gave low confidence result, combine with rule-based
+        if self.sentiment_pipeline and model_result:
+            # If both methods agree, increase confidence
+            if model_result == rule_result:
+                combined_confidence = min(0.95, (model_confidence + rule_confidence) / 2 + 0.1)
+                return model_result, combined_confidence
+            else:
+                # If they disagree, use rule-based for Indonesian text
+                return rule_result, rule_confidence
+        
+        return rule_result, rule_confidence
     
     def process_comments(self, df):
-        """
-        Proses semua komentar dalam DataFrame
-        
-        Args:
-            df (pandas.DataFrame): DataFrame dengan kolom 'komentar'
-            
-        Returns:
-            pandas.DataFrame: DataFrame dengan kolom tambahan sentiment
-        """
+        """Process all comments in DataFrame"""
         logger.info("Memulai preprocessing dan analisis sentimen...")
         
+        # loading
         df['komentar'] = df['komentar'].astype(str)
         
-        # Preprocessing teks
+        # Text processing text
         logger.info("Melakukan text preprocessing...")
         tqdm.pandas(desc="Preprocessing")
         df['komentar_bersih'] = df['komentar'].progress_apply(preprocess_text)
         
-        # Analisis sentimen dengan progress bar
+        # bar scentimen
         logger.info("Melakukan analisis sentimen...")
         tqdm.pandas(desc="Sentiment Analysis")
         sentiment_results = df['komentar_bersih'].progress_apply(self.detect_sentiment)
         
-        # Split hasil sentimen dan confidence
+        # Split result sentimen
         df['label_sentimen'] = sentiment_results.apply(lambda x: x[0])
         df['confidence_score'] = sentiment_results.apply(lambda x: x[1])
         
         return df
     
     def generate_summary(self, df):
-        """Generate summary statistik sentimen"""
+        """Generate sentiment summary statistics"""
         sentiment_counts = df['label_sentimen'].value_counts()
         total_comments = len(df)
         
@@ -132,18 +188,27 @@ def main():
     input_path = "data/komentar_instagram.csv"
     output_path = "data/komentar_dengan_sentimen.csv"
     
-    # Validasi file input
+    # Validasi file
     if not os.path.exists(input_path):
         logger.error(f"File tidak ditemukan: {input_path}")
         return
     
-    # Baca data CSV
-    try:
-        logger.info(f"Membaca file: {input_path}")
-        df = pd.read_csv(input_path, on_bad_lines='skip', encoding='utf-8')
-        logger.info(f"Berhasil membaca {len(df)} baris data")
-    except Exception as e:
-        logger.error(f"Gagal membaca file CSV: {e}")
+    # Read CSV 
+    df = None
+    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    
+    for encoding in encodings:
+        try:
+            logger.info(f"Mencoba membaca file dengan encoding: {encoding}")
+            df = pd.read_csv(input_path, on_bad_lines='skip', encoding=encoding)
+            logger.info(f"Berhasil membaca {len(df)} baris data dengan encoding {encoding}")
+            break
+        except Exception as e:
+            logger.warning(f"Gagal dengan encoding {encoding}: {e}")
+            continue
+    
+    if df is None:
+        logger.error("Gagal membaca file dengan semua encoding yang dicoba")
         return
     
     # Validasi kolom
@@ -152,27 +217,27 @@ def main():
         logger.info(f"Kolom yang tersedia: {list(df.columns)}")
         return
     
-    # Hapus baris dengan komentar kosong atau null
+    # Clean comments
     initial_count = len(df)
     df = df.dropna(subset=['komentar'])
     df = df[df['komentar'].str.strip() != '']
-    logger.info(f"Data setelah membersihkan komentar kosong: {len(df)} baris (dihapus: {initial_count - len(df)} baris)")
+    logger.info(f"Data setelah cleaning: {len(df)} baris (dihapus: {initial_count - len(df)} baris)")
     
     if len(df) == 0:
         logger.error("Tidak ada data valid untuk diproses")
         return
     
-    # Inisialisasi analyzer
+    # Initialize analyzer
     try:
-        analyzer = InstagramSentimentAnalyzer()
+        analyzer = ImprovedSentimentAnalyzer()
     except Exception as e:
         logger.error(f"Gagal menginisialisasi analyzer: {e}")
         return
     
-    # Proses analisis sentimen
+    # Process analysis
     df_processed = analyzer.process_comments(df)
     
-    # Simpan hasil
+    # Save 
     try:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         df_processed.to_csv(output_path, index=False, encoding='utf-8')
@@ -181,7 +246,7 @@ def main():
         logger.error(f"Gagal menyimpan file: {e}")
         return
     
-    # Generate dan tampilkan summary
+    # Generate 
     summary = analyzer.generate_summary(df_processed)
     
     print("\n" + "="*60)
@@ -192,16 +257,15 @@ def main():
         print(f"{key:<20}: {value}")
     
     print("\n" + "="*60)
-    print("📋 SAMPLE HASIL ANALISIS (10 KOMENTAR PERTAMA)")
+    print("📋 SAMPLE HASIL ANALISIS")
     print("="*60)
     
-    # Tampilkan sample hasil dengan format yang rapi
+    # Show sample result
     sample_data = df_processed[['komentar', 'komentar_bersih', 'label_sentimen', 'confidence_score']].head(10)
     
-    # Potong komentar yang terlalu panjang untuk display
     sample_data_display = sample_data.copy()
     sample_data_display['komentar'] = sample_data_display['komentar'].apply(
-        lambda x: x[:50] + "..." if len(str(x)) > 50 else x
+        lambda x: x[:60] + "..." if len(str(x)) > 60 else x
     )
     sample_data_display['komentar_bersih'] = sample_data_display['komentar_bersih'].apply(
         lambda x: x[:40] + "..." if len(str(x)) > 40 else x
@@ -213,6 +277,12 @@ def main():
         tablefmt='grid',
         showindex=False
     ))
+    
+    # cheklis all in one
+    label_dist = df_processed['label_sentimen'].value_counts()
+    print(f"\n🔍 DISTRIBUSI LABEL:")
+    for label, count in label_dist.items():
+        print(f"  {label.capitalize()}: {count} ({count/len(df_processed)*100:.1f}%)")
     
     print(f"\n✅ Analisis selesai! Total {len(df_processed)} komentar berhasil diproses.")
     print(f"📁 File hasil: {output_path}")
