@@ -124,7 +124,6 @@ class ImprovedSentimentAnalyzer:
         if self.sentiment_pipeline:
             model_result, model_confidence = self.detect_sentiment_model(text)
             
-            # model jika
             if model_result and model_confidence > 0.7:
                 return model_result, model_confidence
         
@@ -136,7 +135,6 @@ class ImprovedSentimentAnalyzer:
                 combined_confidence = min(0.95, (model_confidence + rule_confidence) / 2 + 0.1)
                 return model_result, combined_confidence
             else:
-                # If they disagree, use rule-based for Indonesian text
                 return rule_result, rule_confidence
         
         return rule_result, rule_confidence
