@@ -24,22 +24,18 @@ def main():
         print("[ERROR] Kolom 'komentar_bersih' atau 'label' tidak ditemukan.")
         return
 
-    # Hapus data kosong dan filter label valid
     df = df.dropna(subset=["komentar_bersih", "label"])
     df = df[df['label'].isin(['positif', 'negatif', 'netral'])]
 
-    # Balance data (undersampling)
     min_count = df['label'].value_counts().min()
     df = df.groupby('label').apply(lambda x: x.sample(min_count, random_state=42)).reset_index(drop=True)
 
     print("\n[INFO] Distribusi label setelah balancing:")
     print(df['label'].value_counts())
 
-    # Fitur dan label
     X_text = df["komentar_bersih"].astype(str)
     y = df["label"].astype(str)
 
-    # TF-IDF Vectorizer dengan setting optimal
     vectorizer = TfidfVectorizer(
         ngram_range=(1, 2),
         max_df=0.9,
@@ -49,7 +45,6 @@ def main():
     )
     X = vectorizer.fit_transform(X_text)
 
-    # Split data
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42
     )

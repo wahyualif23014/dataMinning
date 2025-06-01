@@ -61,12 +61,10 @@ class InstagramSentimentAnalyzer:
             # Prediksi sentimen
             results = self.sentiment_pipeline(text_input)[0]
             
-            # Cari label dengan confidence tertinggi
             best_result = max(results, key=lambda x: x['score'])
             label_raw = best_result['label'].lower()
             confidence = best_result['score']
             
-            # Mapping label ke format yang diinginkan
             if any(keyword in label_raw for keyword in ['positive', 'positif', 'pos']):
                 sentiment_label = 'positif'
             elif any(keyword in label_raw for keyword in ['negative', 'negatif', 'neg']):
