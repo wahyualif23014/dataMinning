@@ -16,7 +16,6 @@ import logging
 from datetime import datetime
 import warnings
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -54,12 +53,10 @@ class SentimentModelTrainer:
             logger.error(f"Gagal membaca file: {e}")
             raise
         
-        # Validasi kolom yang dibutuhkan
         required_cols = ['komentar_bersih', 'label_sentimen']
         missing_cols = [col for col in required_cols if col not in df.columns]
         
         if missing_cols:
-            # Coba kolom alternatif untuk backward compatibility  
             if 'label' in df.columns and 'label_sentimen' not in df.columns:
                 df['label_sentimen'] = df['label']
                 logger.info("Menggunakan kolom 'label' sebagai 'label_sentimen'")
@@ -80,13 +77,11 @@ class SentimentModelTrainer:
         
         logger.info(f"Data setelah cleaning: {len(df)} baris (dihapus: {initial_count - len(df)} baris)")
         
-        # Filter hanya 3 kelas yang diinginkan
         valid_labels = ['positif', 'negatif', 'netral']
         df = df[df['label_sentimen'].isin(valid_labels)]
         
         logger.info(f"Data setelah filtering label: {len(df)} baris")
         
-        # Cek minimal 2 kelas dengan data yang cukup
         label_counts = df['label_sentimen'].value_counts()
         valid_labels_with_data = label_counts[label_counts >= 10].index.tolist()
         
@@ -94,7 +89,6 @@ class SentimentModelTrainer:
             raise ValueError(f"Dataset harus memiliki minimal 2 kelas dengan minimal 10 sampel. "
                            f"Label yang valid: {valid_labels_with_data}")
         
-        # Filter hanya label yang memiliki data cukup
         df = df[df['label_sentimen'].isin(valid_labels_with_data)]
         
         return df
@@ -116,7 +110,6 @@ class SentimentModelTrainer:
         ))
         
         if strategy == 'undersample':
-            # Undersample ke jumlah kelas minoritas
             min_count = label_counts.min()
             df_balanced = (
                 df.groupby('label_sentimen', group_keys=False)
@@ -125,7 +118,6 @@ class SentimentModelTrainer:
             )
             
         elif strategy == 'oversample':
-            # Simple oversample dengan replacement
             max_count = label_counts.max()
             df_balanced = (
                 df.groupby('label_sentimen', group_keys=False)
@@ -133,7 +125,7 @@ class SentimentModelTrainer:
                   .reset_index(drop=True)
             )
             
-        else:  # strategy == 'none'
+        else: 
             df_balanced = df.copy()
         
         if strategy != 'none':
@@ -151,14 +143,13 @@ class SentimentModelTrainer:
         """Create TF-IDF features"""
         logger.info("Membuat TF-IDF features...")
         
-        # TF-IDF dengan parameter yang dioptimalkan
         self.vectorizer = TfidfVectorizer(
-            ngram_range=(1, 2),  # Unigram dan bigram
-            max_df=0.9,          # Hapus kata yang terlalu umum
-            min_df=2,            # Hapus kata yang terlalu jarang
-            max_features=10000,  # Batasi jumlah feature
-            sublinear_tf=True,   # Logarithmic scaling
-            stop_words=None      # Tidak menggunakan stop words (sudah dibersihkan di preprocessing)
+            ngram_range=(1, 2),  
+            max_df=0.9,          
+            min_df=2,            
+            max_features=10000,  
+            sublinear_tf=True,  
+            stop_words=None     
         )
         
         X = self.vectorizer.fit_transform(X_text)
@@ -170,7 +161,6 @@ class SentimentModelTrainer:
         """Train multiple models dan pilih yang terbaik"""
         logger.info("Training multiple models...")
         
-        # Calculate class weights untuk handling imbalanced data
         class_weights = compute_class_weight(
             'balanced', 
             classes=np.unique(y_train), 
@@ -178,7 +168,6 @@ class SentimentModelTrainer:
         )
         class_weight_dict = dict(zip(np.unique(y_train), class_weights))
         
-        # Define models
         models = {
             'Naive Bayes': MultinomialNB(alpha=0.1),
             'Random Forest': RandomForestClassifier(
@@ -201,14 +190,12 @@ class SentimentModelTrainer:
         for name, model in models.items():
             logger.info(f"Training {name}...")
             
-            # Cross validation
             cv_scores = cross_val_score(model, X_train, y_train, cv=5, scoring='accuracy')
             
             # Train dan test
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
             
-            # Metrics
             accuracy = accuracy_score(y_test, y_pred)
             
             results[name] = {
@@ -221,7 +208,6 @@ class SentimentModelTrainer:
             
             logger.info(f"{name} - CV: {cv_scores.mean():.4f} (±{cv_scores.std():.4f}), Test: {accuracy:.4f}")
             
-            # Update best model
             if accuracy > best_score:
                 best_score = accuracy
                 self.best_model = model
